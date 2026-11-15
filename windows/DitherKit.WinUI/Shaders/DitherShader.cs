@@ -12,11 +12,13 @@ namespace DitherKit.WinUI.Shaders;
 #else
 [D2DShaderProfile(D2D1ShaderProfile.PixelShader50)]
 #endif
-// FXC X3556 reports intentional signed division/modulo, which is required for
-// the reference Bresenham and Euclidean-modulo rules. ComputeSharp's default
-// includes /WX; clear only that flag for this shader, retaining optimization,
-// validation, linking, row-major packing and IEEE-strict arithmetic.
-[D2DCompileOptions((D2D1CompileOptions.Default & ~D2D1CompileOptions.WarningsAreErrors) | D2D1CompileOptions.IeeeStrictness)]
+// This large interpreter contains bounded VM/gamut loops nested inside bloom.
+// FXC /O3 spends excessive build time optimizing those loops. Use the supported
+// /O0 profile and omit optional linking (which compiles the whole shader twice).
+// Keep IEEE-strict arithmetic and normal validation; signed division/modulo is
+// intentional for parity, so do not enable /WX for FXC's X3556 performance hints.
+// Revisit optimization/linking only with measured build, render and golden results.
+[D2DCompileOptions(D2D1CompileOptions.OptimizationLevel0 | D2D1CompileOptions.IeeeStrictness | D2D1CompileOptions.PackMatrixRowMajor)]
 [D2DGeneratedPixelShaderDescriptor]
 public readonly partial struct DitherShader : ID2D1PixelShader
 {
