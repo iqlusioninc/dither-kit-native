@@ -1,0 +1,13 @@
+[package]
+name = "dither-golden"
+description = "Generates the cross-port golden fixtures from dither-core and checks the reference interpreter against it."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+dither-ir = { path = "../dither-ir" }
+dither-core = "=0.1.0"
+serde_json = "1"
+png = "0.17"

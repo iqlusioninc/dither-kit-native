@@ -1,0 +1,8 @@
+[package]
+name = "dither-gtk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+dither-ir = { path = "../dither-ir" }
