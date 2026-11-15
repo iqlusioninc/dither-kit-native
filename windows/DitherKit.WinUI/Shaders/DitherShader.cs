@@ -13,8 +13,9 @@ namespace DitherKit.WinUI.Shaders;
 [D2DShaderProfile(D2D1ShaderProfile.PixelShader50)]
 #endif
 // This large interpreter contains bounded VM/gamut loops nested inside bloom.
-// FXC /O3 spends excessive build time optimizing those loops. Use the supported
-// /O0 profile and omit optional linking (which compiles the whole shader twice).
+// Long walks expose their data-dependent exit in the loop header for FXC.
+// Use /O0 as the initial compile baseline and omit optional linking, which
+// compiles the whole shader twice.
 // Keep IEEE-strict arithmetic and normal validation; signed division/modulo is
 // intentional for parity, so do not enable /WX for FXC's X3556 performance hints.
 // Revisit optimization/linking only with measured build, render and golden results.
@@ -138,10 +139,12 @@ private float4 shade(float hue, float chroma, float level) {
     float l = 0.22f + level * 0.72f;
     float c = Hlsl.Max(chroma * Hlsl.Clamp(1.0f - Hlsl.Abs(level - 0.55f) * 1.3f, 0.25f, 1.0f), 0.0f);
     float4 o;
-    for (int k = 0; k < 200; k++) {
+    int k = 0;
+    while (!(c < 0.0f) && k < 200) {
         if (oklch_rgb(l, c, hue, out o)) return o;
         c -= 0.005f;
         if (c <= 0.0f) break;
+        k++;
     }
     if (oklch_rgb(l, 0.0f, hue, out o)) return o;
     return new float4(0.0f, 0.0f, 0.0f, 255.0f);
@@ -396,12 +399,13 @@ private float4 evalOp(int i, int tb, int x, int y, float4 cur) {
 private float4 evalList(int start, int end, int x, int y, float4 cur) {
     int tb = 1 + DI(0);
     int i = start;
-    for (int guard = 0; guard < 65536; guard++) {
-        if (i >= end) break;
+    int guard = 0;
+    while (i < end && guard < 65536) {
         if (DI(i) == OP_BLOOM) break;
         float4 c = evalOp(i, tb, x, y, cur);
         if (c.W >= 0.0f) cur = c;
         i += DI(i + 1);
+        guard++;
     }
     return cur;
 }
@@ -409,10 +413,11 @@ private float4 evalList(int start, int end, int x, int y, float4 cur) {
 private int bloomIndex() {
     int end = 1 + DI(0);
     int i = 1;
-    for (int guard = 0; guard < 65536; guard++) {
-        if (i >= end) break;
+    int guard = 0;
+    while (i < end && guard < 65536) {
         if (DI(i) == OP_BLOOM) return i;
         i += DI(i + 1);
+        guard++;
     }
     return end;
 }
@@ -433,8 +438,8 @@ private float4 postPixel(int x, int y) {
         float strength = D(b + 3);
         if (cur.W < 0.0f && radius > 0) {
             bool done = false;
-            for (int d = 1; d <= 4; d++) {
-                if (d > radius || done) break;
+            for (int d = 1; d <= Hlsl.Min(radius, 4); d++) {
+                if (done) break;
                 for (int oy = -d; oy <= d; oy++) {
                     if (done) break;
                     for (int ox = -d; ox <= d; ox++) {
