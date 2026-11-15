@@ -190,6 +190,126 @@ fn gles_matches_all_39_goldens() {
     compare_all(true);
 }
 
+/// Opt-in end-to-end profile, never a CI timing assertion.
+/// Run with `cargo test -p dither-gtk --test golden shader_profile -- --ignored --nocapture`.
+/// DITHER_PROFILE_ALL=1 includes every fixture; DITHER_PROFILE_JSON writes raw samples.
+#[test]
+#[ignore = "explicit GPU performance measurement; requires desktop OpenGL timer queries"]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn shader_profile() {
+    use std::time::Instant;
+    const SAMPLES: usize = 7;
+    const FRAMES: usize = 100;
+    const WARMUP: usize = 20;
+    const SELECTED: &[&str] = &[
+        "gradient_2",
+        "background_plasma",
+        "area_2",
+        "line_4",
+        "pie_2",
+        "radar_1",
+    ];
+    fn median(samples: &[f64]) -> f64 {
+        let mut ordered = samples.to_vec();
+        ordered.sort_by(f64::total_cmp);
+        ordered[ordered.len() / 2]
+    }
+
+    let _lock = GPU_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let headless = Headless::new(false);
+    let gl = &headless.gl;
+    let mut renderer = unsafe { Renderer::new(gl.clone()) }.expect("compile/link interpreter");
+    let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/scenes.json");
+    let fixture_bytes = std::fs::read(fixtures).unwrap();
+    let document: serde_json::Value = serde_json::from_slice(&fixture_bytes).unwrap();
+    let scenes = document["scenes"].as_array().unwrap();
+    assert_eq!(scenes.len(), 39);
+    let all = std::env::var("DITHER_PROFILE_ALL").as_deref() == Ok("1");
+    let device = unsafe {
+        serde_json::json!({
+            "vendor": gl.get_parameter_string(glow::VENDOR),
+            "renderer": gl.get_parameter_string(glow::RENDERER),
+            "version": gl.get_parameter_string(glow::VERSION),
+            "shading_language_version": gl.get_parameter_string(glow::SHADING_LANGUAGE_VERSION),
+        })
+    };
+    eprintln!("shader_profile device={device}");
+    eprintln!(
+        "original encoded grid sizes; straight=true; {WARMUP} warmup renders; {SAMPLES} samples x {FRAMES} renders; two passes/render"
+    );
+    eprintln!(
+        "GPU TIME_ELAPSED includes queued host submission gaps, uploads and both passes; not isolated kernel time. CPU wall includes submission and finish synchronization. No readback, compilation or warmup timed."
+    );
+    let mut results = Vec::new();
+    for scene in scenes {
+        let name = scene["name"].as_str().unwrap();
+        if !all && !SELECTED.contains(&name) {
+            continue;
+        }
+        let w = i32::try_from(scene["w"].as_i64().unwrap()).unwrap();
+        let h = i32::try_from(scene["h"].as_i64().unwrap()).unwrap();
+        let data: Vec<f32> = scene["program"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_f64().unwrap() as f32)
+            .collect();
+        let mut gpu_us = Vec::with_capacity(SAMPLES);
+        let mut cpu_us = Vec::with_capacity(SAMPLES);
+        unsafe {
+            for _ in 0..WARMUP {
+                renderer.render(&data, w, h, true).unwrap();
+            }
+            gl.finish();
+            let query = gl.create_query().expect("desktop GL timer query");
+            for _ in 0..SAMPLES {
+                // Drain prior work so samples never overlap. CPU measurement includes
+                // the synchronized full Renderer::render path, including data packing
+                // and upload; framebuffer allocation occurred during warmup.
+                gl.finish();
+                let start = Instant::now();
+                gl.begin_query(glow::TIME_ELAPSED, query);
+                for _ in 0..FRAMES {
+                    renderer.render(&data, w, h, true).unwrap();
+                }
+                gl.end_query(glow::TIME_ELAPSED);
+                gl.finish();
+                let cpu_elapsed = start.elapsed();
+                let gpu_ns = gl.get_query_parameter_u64(query, glow::QUERY_RESULT);
+                assert_eq!(gl.get_error(), glow::NO_ERROR, "timer query: {name}");
+                assert!(gpu_ns > 0, "timer query returned no elapsed time: {name}");
+                gpu_us.push(gpu_ns as f64 / 1_000.0 / FRAMES as f64);
+                cpu_us.push(cpu_elapsed.as_secs_f64() * 1_000_000.0 / FRAMES as f64);
+            }
+            gl.delete_query(query);
+        }
+        let gpu_median = median(&gpu_us);
+        let cpu_median = median(&cpu_us);
+        eprintln!(
+            "{name} {w}x{h}: median GPU {gpu_median:.3} us/render (two passes), CPU synchronized wall {cpu_median:.3} us/render; GPU samples={gpu_us:?}; CPU samples={cpu_us:?}"
+        );
+        results.push(serde_json::json!({
+            "scene": name, "width": w, "height": h, "program_floats": data.len(),
+            "gpu_us_per_render": gpu_us, "cpu_wall_us_per_render": cpu_us,
+            "median_gpu_us_per_render": gpu_median,
+            "median_cpu_wall_us_per_render": cpu_median,
+        }));
+    }
+    assert_eq!(results.len(), if all { 39 } else { SELECTED.len() });
+    if let Some(path) = std::env::var_os("DITHER_PROFILE_JSON") {
+        let report = serde_json::json!({
+            "device": device, "samples": SAMPLES, "renders_per_sample": FRAMES,
+            "warmup_renders": WARMUP, "passes_per_render": 2, "straight": true,
+            "scope": "steady-state full Renderer::render, original encoded grid dimensions; includes packing and upload; excludes compilation, framebuffer resize and readback",
+            "gpu_clock": "GL_TIME_ELAPSED; includes queued host submission gaps, not isolated kernel time",
+            "cpu_clock": "Instant synchronized wall time including glFinish",
+            "results": results,
+        });
+        std::fs::write(path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
+    }
+    drop(renderer); // Keep the GL context current through renderer destruction.
+}
+
 #[cfg(target_os = "macos")]
 mod macos {
     use super::*;

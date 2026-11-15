@@ -74,7 +74,9 @@ jobs:
         timeout-minutes: 12
         run: ./windows/scripts/build-ci.ps1
       - name: Direct2D golden tests
-        run: dotnet test windows/DitherKit.WinUI.Tests/DitherKit.WinUI.Tests.csproj --configuration Release -p:Platform=x64 --no-build --no-restore
+        env:
+          DITHER_PROFILE: "1"
+        run: dotnet test windows/DitherKit.WinUI.Tests/DitherKit.WinUI.Tests.csproj --configuration Release -p:Platform=x64 --no-build --no-restore --logger "console;verbosity=detailed"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

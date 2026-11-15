@@ -33,6 +33,7 @@ struct Interpreter {
     device const float *data;
     int count;
     bool straightTransport;
+    int programSplit;
 float D(int i) const { return i >= 0 && i < count ? data[i] : 0.0; }
 int DI(int i) { return int(D(i)); }
 
@@ -80,9 +81,8 @@ float enc(float v) {
     return rnd(s * 255.0);
 }
 
-bool oklch_rgb(float l, float c, float h, thread float4 &outc) {
-    float hr = (h * (TAU / 360.0));
-    float a = c * cos(hr), b = c * sin(hr);
+bool oklch_rgb(float l, float c, float cos_h, float sin_h, thread float4 &outc) {
+    float a = c * cos_h, b = c * sin_h;
     float l_ = l + 0.39633778 * a + 0.21580376 * b;
     float m_ = l - 0.105561346 * a - 0.06385417 * b;
     float s_ = l - 0.08948418 * a - 1.2914855 * b;
@@ -100,13 +100,16 @@ float4 shade(float hue, float chroma, float level) {
     level = clamp(level, 0.0, 1.0);
     float l = 0.22 + level * 0.72;
     float c = max(chroma * clamp(1.0 - abs(level - 0.55) * 1.3, 0.25, 1.0), 0.0);
+    // Keep the original angle calculation and trig functions, once per shade.
+    float hr = (hue * (TAU / 360.0));
+    float cos_h = cos(hr), sin_h = sin(hr);
     float4 o;
     for (int k = 0; k < 200; k++) {
-        if (oklch_rgb(l, c, hue, o)) return o;
+        if (oklch_rgb(l, c, cos_h, sin_h, o)) return o;
         c -= 0.005;
         if (c <= 0.0) break;
     }
-    if (oklch_rgb(l, 0.0, hue, o)) return o;
+    if (oklch_rgb(l, 0.0, cos_h, sin_h, o)) return o;
     return float4(0.0, 0.0, 0.0, 255.0);
 }
 
@@ -372,6 +375,7 @@ float4 evalList(int start, int end, int x, int y, float4 cur) {
 }
 
 int bloomIndex() {
+    if (programSplit > 0) return programSplit;
     int end = 1 + DI(0);
     int i = 1;
     for (int guardIndex = 0; guardIndex < 65536; guardIndex++) {
@@ -425,11 +429,11 @@ float4 postPixel(int x, int y, SwiftUI::Layer layer, float cell, float2 grid) {
 };
 // floatArray binds a pointer followed by an automatically supplied count.
 [[ stitchable ]] half4 ditherBase(float2 position, half4 color,
-    device const float *data, int count, float cell, float2 grid, float straightOutput) {
+    device const float *data, int count, float cell, float2 grid, float straightOutput, float programSplit) {
     if (count < 1 || cell <= 0) return half4(0);
     int2 p = int2(floor(position / cell));
     if (any(p < 0) || any(p >= int2(grid))) return half4(0);
-    Interpreter vm {data, count, straightOutput != 0};
+    Interpreter vm {data, count, straightOutput != 0, int(programSplit)};
     float4 c = vm.evalList(1, vm.bloomIndex(), p.x, p.y, EMPTY);
     // Production SwiftUI layers use premultiplied colors. Tests transport
     // straight RGBA in both passes so 8-bit premultiplication does not destroy
@@ -439,11 +443,11 @@ float4 postPixel(int x, int y, SwiftUI::Layer layer, float cell, float2 grid) {
     return c.a < 0 ? half4(0) : half4(float4(c.rgb / 255.0 * (c.a / 255.0), c.a / 255.0));
 }
 [[ stitchable ]] half4 ditherPost(float2 position, SwiftUI::Layer layer,
-    device const float *data, int count, float cell, float2 grid, float straightOutput) {
+    device const float *data, int count, float cell, float2 grid, float straightOutput, float programSplit) {
     if (count < 1 || cell <= 0) return half4(0);
     int2 p = int2(floor(position / cell));
     if (any(p < 0) || any(p >= int2(grid))) return half4(0);
-    Interpreter vm {data, count, straightOutput != 0};
+    Interpreter vm {data, count, straightOutput != 0, int(programSplit)};
     float4 c = vm.postPixel(p.x, p.y, layer, cell, grid);
     if (straightOutput != 0) return c.a < 0 ? half4(0) : half4(c / 255.0);
     return c.a < 0 ? half4(0) : half4(float4(c.rgb / 255.0 * (c.a / 255.0), c.a / 255.0));

@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
 using DitherKit.WinUI;
 using Microsoft.Graphics.Canvas;
 using Windows.Graphics.Imaging;
@@ -49,5 +51,91 @@ public sealed class GoldenTests(ITestOutputHelper output)
             count++;
         }
         Assert.Equal(39, count);
+        if (Environment.GetEnvironmentVariable("DITHER_PROFILE") == "1")
+            Profile(device, scenes.RootElement.GetProperty("scenes"));
+    }
+
+    // Opt-in diagnostics only: correctness above always checks all 39 scenes.
+    // Both modes use this process, this WARP device and the current shader;
+    // only CPU-cached program metadata versus the legacy GPU scan differs.
+    private void Profile(CanvasDevice device, JsonElement scenes)
+    {
+        string[] names = ["gradient_2", "background_plasma", "area_2", "line_4", "pie_2", "radar_1"];
+        const int warmupRendersPerMode = 10;
+        const int rendersPerSample = 25;
+        const int sampleCount = 7;
+        foreach (string name in names)
+        {
+            var scene = scenes.EnumerateArray().Single(s => s.GetProperty("name").GetString() == name);
+            int w = scene.GetProperty("w").GetInt32(), h = scene.GetProperty("h").GetInt32();
+            var program = scene.GetProperty("program").EnumerateArray().Select(v => v.GetSingle()).ToArray();
+            byte[] RenderAndSynchronize(bool legacyGpuScan)
+            {
+                using var target = legacyGpuScan
+                    ? LegacyProfileRenderer.Render(device, program, w, h)
+                    : DitherRenderer.Render(device, program, w, h, straightAlpha: true);
+                return target.GetPixelBytes(); // Both paths finish GPU work and dispose the target before returning.
+            }
+            double Measure(bool legacyGpuScan)
+            {
+                var clock = Stopwatch.StartNew();
+                for (int i = 0; i < rendersPerSample; i++) _ = RenderAndSynchronize(legacyGpuScan);
+                clock.Stop();
+                return clock.Elapsed.TotalMicroseconds / rendersPerSample;
+            }
+
+            for (int i = 0; i < warmupRendersPerMode; i++)
+            {
+                _ = RenderAndSynchronize(true);
+                _ = RenderAndSynchronize(false);
+            }
+            byte[] legacyPixels = RenderAndSynchronize(true);
+            byte[] cachedPixels = RenderAndSynchronize(false);
+            Assert.True(legacyPixels.AsSpan().SequenceEqual(cachedPixels),
+                $"{name}: legacy GPU scan and CPU-cached program split must produce byte-identical RGBA before profiling");
+
+            double[] legacySamples = new double[sampleCount];
+            double[] cachedSamples = new double[sampleCount];
+            for (int sample = 0; sample < sampleCount; sample++)
+            {
+                // Reverse the order in successive pairs to distribute temporal drift.
+                if (sample % 2 == 0)
+                {
+                    legacySamples[sample] = Measure(true);
+                    cachedSamples[sample] = Measure(false);
+                }
+                else
+                {
+                    cachedSamples[sample] = Measure(false);
+                    legacySamples[sample] = Measure(true);
+                }
+            }
+            double legacyMedian = legacySamples.Order().ElementAt(sampleCount / 2);
+            double cachedMedian = cachedSamples.Order().ElementAt(sampleCount / 2);
+            output.WriteLine("DITHER_PROFILE " + JsonSerializer.Serialize(new
+            {
+                scene = name, width = w, height = h,
+                comparison = "Current shader: legacy GPU metadata scan versus CPU-cached program split; hue trig hoist is shared. Not a full historical shader comparison.",
+                renderer = "WARP; both modes share one CanvasDevice in this process",
+                warmup_renders_per_mode = warmupRendersPerMode, renders_per_sample = rendersPerSample,
+                sample_count = sampleCount, exact_rgba_match = true,
+                clock = "Synchronized wall time per render: allocation, upload, drawing, readback and disposal; not isolated GPU time",
+                baseline_legacy_gpu_scan = new { median_us = legacyMedian, samples_us = legacySamples },
+                cpu_cached_program_split = new { median_us = cachedMedian, samples_us = cachedSamples },
+                median_ratio_legacy_over_cached = legacyMedian / cachedMedian,
+                paired_samples = Enumerable.Range(0, sampleCount).Select(i => new
+                {
+                    sample = i,
+                    first_mode = i % 2 == 0 ? "legacy_gpu_scan" : "cpu_cached_program_split",
+                    legacy_gpu_scan_us = legacySamples[i], cpu_cached_program_split_us = cachedSamples[i]
+                }).ToArray(),
+                revision = Environment.GetEnvironmentVariable("GITHUB_SHA") ?? "local",
+                processor_identifier = Environment.GetEnvironmentVariable("PROCESSOR_IDENTIFIER") ?? "unavailable",
+                processor_count = Environment.ProcessorCount,
+                runtime = RuntimeInformation.FrameworkDescription, os = RuntimeInformation.OSDescription,
+                os_architecture = RuntimeInformation.OSArchitecture.ToString(),
+                process_architecture = RuntimeInformation.ProcessArchitecture.ToString()
+            }));
+        }
     }
 }

@@ -13,6 +13,24 @@ public static class Op
 public sealed class DitherProgram
 {
     public const float None = -1e9f;
+    /// <summary>First bloom operation or operation-list end; null for malformed lists.</summary>
+    public static int? FindBloomIndex(ReadOnlySpan<float> data)
+    {
+        if (data.IsEmpty || !float.IsFinite(data[0]) || data[0] < 0 ||
+            data[0] != MathF.Truncate(data[0]) || (double)data[0] >= data.Length) return null;
+        int end = 1 + (int)data[0], index = 1, visited = 0, split = end;
+        while (index < end)
+        {
+            if (index + 1 >= end) return null;
+            float length = data[index + 1];
+            if (!float.IsFinite(length) || length < 2 || length != MathF.Truncate(length) ||
+                (double)length > end - index) return null;
+            if (split == end && visited < 65_536 && data[index] >= 14 && data[index] < 15) split = index;
+            index += (int)length;
+            visited++;
+        }
+        return split;
+    }
     private readonly List<float> ops = [];
     private readonly List<float> tables = [];
     public bool IsEmpty => ops.Count == 0;

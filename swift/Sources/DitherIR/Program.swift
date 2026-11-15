@@ -3,6 +3,20 @@ public struct Program: Equatable, Sendable {
     private var ops: [Float] = []
     private var tables: [Float] = []
     public init() {}
+    /// First bloom operation or operation-list end; malformed lists return nil.
+    public static func bloomIndex(in data: [Float]) -> Int? {
+        guard let header = data.first, let count = Int(exactly: header), count >= 0, count < data.count else { return nil }
+        let end = count + 1
+        var index = 1, visited = 0, split = end
+        while index < end {
+            guard index + 1 < end, let length = Int(exactly: data[index + 1]),
+                  length >= 2, length <= end - index else { return nil }
+            if split == end && visited < 65_536 && data[index] >= 14 && data[index] < 15 { split = index }
+            index += length
+            visited += 1
+        }
+        return split
+    }
     public var isEmpty: Bool { ops.isEmpty }
     public var data: [Float] { [Float(ops.count)] + ops + tables }
     public func toArray() -> [Float] { data }
