@@ -1,42 +1,41 @@
-# Native port execution
+# Native port execution and validation
 
-Source: `PLAN.md` and the supplied archive, restored at baseline `abaabe4`.
-Implementation branch: `implement-native-ports`.
+Implemented from the supplied archive at baseline `abaabe4`. All planned ports, component wrappers, galleries, shared fixture tests, CI jobs, licenses and documentation are present.
 
-## Decisions
+Source published: https://github.com/iqlusioninc/dither-kit-native
 
-- This restored checkout is isolated from the source archive; implement here on a feature branch.
-- Run independent language/platform implementations in parallel; each owns a separate directory. Shared fixture and Rust reference files remain the source of truth.
-- The build host is macOS arm64 with GTK 4.24.1, Swift 6.4.2, and .NET SDK 11. Linux Mesa/EGL and Windows Direct2D require their native CI runners.
-- Replace obsolete Rust `epoxy = 0.1` (depends on yanked `xml-rs`) with `libloading` of libepoxy dispatch exports, retaining libepoxy symbol loading.
-- ComputeSharp 3.2 requires Windows SDK 22621; use that compile-time TFM while retaining minimum runtime Windows 10 build 19041.
-- FXC emits performance warnings for the reference's required signed division and modulo. Disable warnings-as-errors only on this shader, retain normal validation/optimization/linking, and enable IEEE strictness; pixel parity remains a hard gate.
-- Strengthen `dither-golden --check`: check stored JSON programs and decoded PNG bytes as well as freshly generated VM/upstream parity. A test demonstrated the original command accepted changed fixture programs.
+## Verified source
 
-## Baseline validation
+All three native CI jobs passed at **`e53d2db`**:
+https://github.com/iqlusioninc/dither-kit-native/actions/runs/43759867023
 
-- `cargo test --workspace`: 2 reference VM tests passed (GTK was a stub).
-- `cargo run -p dither-golden -- ../fixtures --check`: 39 generated scenes matched upstream exactly.
+| Platform | Validation |
+| --- | --- |
+| Ubuntu 24.04 | Rust workspace tests; all 39 GLSL fixtures through desktop GL and GLES under surfaceless Mesa; premultiplied-alpha/top-left nearest-blit regression; committed fixture integrity; 74 C# encoder/helper tests on .NET 8; GTK gallery capture under Xvfb/llvmpipe |
+| macOS 15 | Full Swift package build; nine IR tests, including independent encoding of all 39 scenes; strict Metal/ImageRenderer comparison of all 39 scenes; production premultiplied comparison of all 39 scenes; legend visibility regression |
+| Windows | Visual Studio MSBuild gallery and test builds; native FXC shader compilation; windowless Win2D/WARP comparison of all 39 golden images, with no skips |
 
-## Work streams
+The logical shader gate permits a maximum channel difference of 2 and at most 1% nonidentical pixels. Encoder arrays are checked independently against the fixture programs within `1e-4`. The Rust reference VM still matches pinned upstream `dither-core = "=0.1.0"` exactly in all 39 scenes. `golden --check` additionally rejects changed or missing committed JSON/PNG artifacts without rewriting them.
 
-- GTK renderer, components, gallery and native GPU tests: implemented. Local Rust suite passes; all 39 GLSL fixtures pass on Apple OpenGL (maximum channel delta 1). Linux EGL/Mesa remains for CI.
-- Pure Swift encoders and fixture tests: implemented; all 39 independent encodings match. Nine encoder/helper tests pass locally.
-- SwiftUI views, Metal, gallery and GPU tests: implemented. Independent full-package run passes nine IR tests plus three UI tests, including all 39 strict logical Metal goldens and all 39 production compositing cases. Maximum observed Metal channel drift is 1.
-- Pure C# encoders and fixture tests: implemented; independent Release run passes all 74 tests, including all 39 fixture encodings. Local host uses .NET 11 roll-forward; CI uses .NET 8.
-- WinUI controls, Direct2D shader, gallery and GPU tests: implemented. C# static compilation passed with native stages bypassed; Windows HLSL, packaging and pixel execution require CI.
-- CI, README and fixture-integrity regression: implemented. Changed/missing artifact regression passes; scoped code review approved.
+Additional local validation passed: native Apple OpenGL goldens, strict GTK Clippy, sandboxed SwiftPM builds, and an iOS 17 simulator-destination cross-build with correctly targeted Metal. The local Apple GL and Metal comparisons observed maximum channel drift 1.
 
-## Publishing
+## Gallery evidence
 
-User authorized a new public repository under `iqlusioninc`.
-Created and source pushed: https://github.com/iqlusioninc/dither-kit-native.
-Native run results: https://github.com/iqlusioninc/dither-kit-native/actions.
+`docs/gallery-gtk.png` is the verified Linux llvmpipe gallery capture. `artifacts/swift-gallery.png` is the inspected native SwiftUI gallery export. The GTK smoke check disables animations before constructing components, waits for completed frames and stable allocation, checks seven separated axis-label groups, and verifies populated GPU chart geometry before saving the image.
 
-The first Linux CI run passed strict desktop GL and GLES goldens (39 scenes each), fixture integrity, and all 74 C# tests on .NET 8. The gallery capture exposed timing/layout issues under llvmpipe; those are being corrected before final screenshot acceptance. Initial macOS CI exposed a plugin cache sandbox issue; the fix passes a fresh sandboxed SwiftPM run locally. Windows reached HLSL compilation and exposed FXC warnings-as-errors; the shader-local flag correction awaits native rerun.
+Native component review fixed visibility overrides, axes positioned against actual scale geometry, GTK callback ownership cycles, WinUI hover handling for unequal-length series, and button density/ticking behavior. Encoder regressions cover formatting/saturating casts and NaN reductions.
 
-## Review and pixel transport
+## Build decisions
 
-Review caught and fixed initially hidden series that could not be revealed, chart axes that did not use actual geometry, GTK widget callback ownership cycles, and WinUI legend/hover/button behavior. Encoder edge regressions cover Rust formatting/saturating casts and NaN reductions. Native galleries were visually inspected; the GTK screenshot is in `docs/gallery-gtk.png`.
+- GTK requires Rust 1.92+ and GTK 4.10+. The pure Rust IR retains its lower MSRV. System libepoxy is loaded with `libloading`; the obsolete Rust `epoxy` crate depends on yanked packages and cannot resolve a fresh build.
+- ComputeSharp 3.2 requires SDK 22621 at compile time; Windows runtime minimum remains build 19041. Visual Studio MSBuild supplies the required PRI/XAML tasks. `global.json` selects .NET SDK 8 rather than an unrelated newer installed SDK.
+- FXC signed division/modulo performance warnings are intentional for reference parity. They are not promoted to errors for this shader. Native shader compilation uses `SkipOptimization`, IEEE strictness and row-major packing, with normal validation retained and optional linking disabled. O0 and O3 exceeded the bounded compile limit; the accepted native gallery rebuild completed in 157 seconds. Optimization and physical-GPU performance tuning need separate measurements and the same golden gates.
+- Windows CI separately checks managed-only packaging, a clean native shader rebuild and test artifacts. The managed-only stage is diagnostic and cannot satisfy the native shader or pixel gates. Time limits and compiler CPU/memory logs prevent silent indefinite builds; only text diagnostics are uploaded.
 
-SwiftUI normally transports premultiplied layer colors. Converting low-alpha RGBA8 samples back to straight RGB amplifies quantization. The logical Metal golden test therefore uses a straight-RGBA transport switch in both passes, matching the plan's test-output exception. It still runs the identical interpreter, actual layer sampling, bloom and overlays; it does not recompute the base in the post pass or modify fixtures. Production uses premultiplied transport and has a separate compositing-byte test. The strict logical gate remains maximum channel delta 2 and at most 1% nonidentical pixels.
+## Swift pixel transport
+
+SwiftUI normally transports premultiplied layer colors. Converting low-alpha RGBA8 samples back to straight RGB amplifies quantization. The logical Metal golden test therefore uses straight RGBA transport in both passes, matching the plan’s base/test-output exception. It runs the identical interpreter, actual layer sampling, bloom and overlays; it does not recompute the base in the post pass or modify fixtures. Production remains premultiplied and is separately checked against premultiplied golden bytes.
+
+## Validation limits
+
+The Windows renderer was exercised on WARP, not a physical Windows GPU. WinUI gallery compilation passed; manual Windows control interaction and accessibility-device checks were not performed. The iOS destination cross-build passed, but iOS runtime rendering was not exercised. No package-registry release or signed application distribution is claimed.
