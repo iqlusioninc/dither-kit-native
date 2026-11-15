@@ -14,12 +14,12 @@ namespace DitherKit.WinUI.Shaders;
 #endif
 // This large interpreter contains bounded VM/gamut loops nested inside bloom.
 // Long walks expose their data-dependent exit in the loop header for FXC.
-// Use /O0 as the initial compile baseline and omit optional linking, which
+// Skip FXC optimization for this interpreter and omit optional linking, which
 // compiles the whole shader twice.
 // Keep IEEE-strict arithmetic and normal validation; signed division/modulo is
 // intentional for parity, so do not enable /WX for FXC's X3556 performance hints.
 // Revisit optimization/linking only with measured build, render and golden results.
-[D2DCompileOptions(D2D1CompileOptions.OptimizationLevel0 | D2D1CompileOptions.IeeeStrictness | D2D1CompileOptions.PackMatrixRowMajor)]
+[D2DCompileOptions(D2D1CompileOptions.SkipOptimization | D2D1CompileOptions.IeeeStrictness | D2D1CompileOptions.PackMatrixRowMajor)]
 [D2DGeneratedPixelShaderDescriptor]
 public readonly partial struct DitherShader : ID2D1PixelShader
 {
