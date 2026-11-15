@@ -68,6 +68,7 @@ jobs:
           $process = Start-Process $installer -ArgumentList '--quiet' -Wait -PassThru
           if ($process.ExitCode -notin @(0, 3010)) { throw "Windows App Runtime installer failed: $($process.ExitCode)" }
       - name: Build WinUI gallery
-        run: dotnet build windows/DitherKit.Gallery/DitherKit.Gallery.csproj --configuration Release -p:Platform=x64
+        timeout-minutes: 9
+        run: ./windows/scripts/build-ci.ps1
       - name: Direct2D golden tests
         run: dotnet test windows/DitherKit.WinUI.Tests/DitherKit.WinUI.Tests.csproj --configuration Release -p:Platform=x64
