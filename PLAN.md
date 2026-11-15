@@ -1,5 +1,7 @@
 # dither-kit-native: plan and status
 
+The original roadmap is preserved below. For current implementation and validation status, see [README.md](README.md) and [execution evidence](docs/EXECUTION.md).
+
 This repo holds native ports of [dither-kit-rs](https://github.com/DeepanshuMishraa/dither-kit-rs) for three toolkits:
 
 - **GTK4**, written in Rust with gtk4-rs and drawn with GLSL shaders

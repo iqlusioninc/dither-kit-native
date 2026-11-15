@@ -2,3 +2,7 @@ target/
 .build/
 bin/
 obj/
+.superpowers/
+.DS_Store
+TestResults/
+*.xcresult

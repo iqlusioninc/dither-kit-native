@@ -1,0 +1,73 @@
+name: Native parity
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-parity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ubuntu:
+    runs-on: ubuntu-24.04
+    env:
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      EGL_PLATFORM: surfaceless
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Install GTK and Mesa
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libepoxy-dev libegl1-mesa-dev libgl1-mesa-dri libgl-dev xvfb dbus-x11
+      - name: Rust tests, including EGL shader fixtures
+        working-directory: rust
+        run: cargo test --workspace --locked
+      - name: Verify committed fixtures against upstream
+        working-directory: rust
+        run: cargo run --locked -p dither-golden -- ../fixtures --check
+      - name: Render GTK gallery with llvmpipe
+        working-directory: rust
+        run: xvfb-run -a -s '-screen 0 1400x1200x24' env LIBGL_ALWAYS_SOFTWARE=1 GSK_RENDERER=gl cargo run --locked -p dither-gtk --example gallery -- --smoke "$RUNNER_TEMP/gtk-gallery.png"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gtk-gallery
+          path: ${{ runner.temp }}/gtk-gallery.png
+          if-no-files-found: warn
+      - name: C# encoder fixtures
+        run: dotnet test windows/DitherKit.IR.Tests/DitherKit.IR.Tests.csproj --configuration Release
+
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift encoder and Metal golden tests
+        run: swift test --package-path swift
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Install Windows App Runtime 1.7
+        shell: pwsh
+        run: |
+          $installer = Join-Path $env:RUNNER_TEMP 'WindowsAppRuntimeInstall.exe'
+          Invoke-WebRequest 'https://aka.ms/windowsappsdk/1.7/latest/windowsappruntimeinstall-x64.exe' -OutFile $installer
+          $process = Start-Process $installer -ArgumentList '--quiet' -Wait -PassThru
+          if ($process.ExitCode -notin @(0, 3010)) { throw "Windows App Runtime installer failed: $($process.ExitCode)" }
+      - name: Build WinUI gallery
+        run: dotnet build windows/DitherKit.Gallery/DitherKit.Gallery.csproj --configuration Release -p:Platform=x64
+      - name: Direct2D golden tests
+        run: dotnet test windows/DitherKit.WinUI.Tests/DitherKit.WinUI.Tests.csproj --configuration Release -p:Platform=x64

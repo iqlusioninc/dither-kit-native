@@ -351,7 +351,9 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let dir = PathBuf::from(args.get(1).map(String::as_str).unwrap_or("../fixtures"));
     let check_only = args.iter().any(|a| a == "--check");
-    fs::create_dir_all(dir.join("png")).unwrap();
+    if !check_only {
+        fs::create_dir_all(dir.join("png")).unwrap();
+    }
     let mut out = vec![];
     let mut failed = 0;
     for mut scene in scenes() {
@@ -373,19 +375,57 @@ fn main() {
         }
         if !check_only {
             write_png(&dir.join("png").join(format!("{name}.png")), w, h, &theirs);
+        } else if let Err(error) = check_png(&dir.join("png").join(format!("{name}.png")), w, h, &theirs) {
+            eprintln!("{name}: {error}");
+            failed += 1;
         }
         scene["program"] = json!(program);
         out.push(scene);
     }
+    let expected = json!({"version": 1, "scenes": out});
     if !check_only {
         fs::write(
             dir.join("scenes.json"),
-            serde_json::to_string_pretty(&json!({"version": 1, "scenes": out})).unwrap(),
+            serde_json::to_string_pretty(&expected).unwrap(),
         )
         .unwrap();
+    } else {
+        let stored = fs::read(dir.join("scenes.json"))
+            .map_err(|error| error.to_string())
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).map_err(|error| error.to_string()));
+        match stored {
+            Ok(value) if value == expected => {}
+            Ok(_) => {
+                eprintln!("scenes.json differs from the generated scene parameters or programs");
+                failed += 1;
+            }
+            Err(error) => {
+                eprintln!("scenes.json: {error}");
+                failed += 1;
+            }
+        }
     }
     if failed > 0 {
-        eprintln!("{failed} scene(s) differ from dither-core");
+        eprintln!("{failed} parity or fixture check(s) failed");
         std::process::exit(1);
     }
+}
+
+/// Compare decoded pixels rather than compression bytes so PNG encoders may vary.
+fn check_png(path: &Path, w: usize, h: usize, pixels: &[Option<core::Rgba>]) -> Result<(), String> {
+    let file = fs::File::open(path).map_err(|error| error.to_string())?;
+    let mut reader = png::Decoder::new(std::io::BufReader::new(file))
+        .read_info().map_err(|error| error.to_string())?;
+    let mut bytes = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut bytes).map_err(|error| error.to_string())?;
+    if info.width as usize != w || info.height as usize != h
+        || info.color_type != png::ColorType::Rgba || info.bit_depth != png::BitDepth::Eight {
+        return Err("expected grid-size 8-bit RGBA PNG".into());
+    }
+    let expected: Vec<u8> = pixels.iter()
+        .flat_map(|color| color.map(|c| [c.r, c.g, c.b, c.a]).unwrap_or([0; 4])).collect();
+    if bytes[..info.buffer_size()] != expected {
+        return Err("stored pixels differ from dither-core".into());
+    }
+    Ok(())
 }
