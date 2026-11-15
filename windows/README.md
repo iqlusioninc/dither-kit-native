@@ -1,17 +1,18 @@
 # Dither Kit for WinUI 3
 
-Requires Windows 10 build 19041+, .NET 8, the Windows SDK 22621, and Visual Studio's Windows application development build tools. The projects target SDK 22621 because ComputeSharp 3.2.0 requires its reference surface. Runtime minimum remains Windows 10 19041.
+Requires Windows 10 build 19041+, .NET 8, the Windows SDK 22621, and Visual Studio's Windows application development build tools. Run the commands below in a Visual Studio Developer PowerShell so `MSBuild.exe` is on PATH. The [Microsoft WinUI CI workflow](https://learn.microsoft.com/windows/apps/package-and-deploy/ci-for-winui3) uses Visual Studio MSBuild because its PRI/XAML tasks are not supplied by the standalone dotnet build host. The projects target SDK 22621 because ComputeSharp 3.2.0 requires its reference surface. Runtime minimum remains Windows 10 19041.
 
 ```powershell
-dotnet build DitherKit.Gallery/DitherKit.Gallery.csproj -p:Platform=x64
-dotnet run --project DitherKit.Gallery/DitherKit.Gallery.csproj -p:Platform=x64
+msbuild DitherKit.Gallery/DitherKit.Gallery.csproj -restore -p:Platform=x64
+./DitherKit.Gallery/bin/x64/Debug/net8.0-windows10.0.22621.0/win-x64/DitherKit.Gallery.exe
 ```
 
 The unpackaged gallery includes the Windows App SDK runtime. Framework-dependent applications and the windowless test host need the [Windows App Runtime 1.7](https://learn.microsoft.com/windows/apps/windows-app-sdk/downloads) installed. Tests explicitly enable the Windows App SDK bootstrap initializer, then create a software Win2D `CanvasDevice` (WARP):
 
 ```powershell
 dotnet test DitherKit.IR.Tests/DitherKit.IR.Tests.csproj
-dotnet test DitherKit.WinUI.Tests/DitherKit.WinUI.Tests.csproj -p:Platform=x64
+msbuild DitherKit.WinUI.Tests/DitherKit.WinUI.Tests.csproj -restore -p:Platform=x64
+dotnet test DitherKit.WinUI.Tests/DitherKit.WinUI.Tests.csproj -p:Platform=x64 --no-build --no-restore
 ```
 
 `DitherGradient`, `DitherBackground`, `DitherChart`, `DitherPie`, `DitherRadar`, `DitherSparkline`, `DitherAvatar`, `DitherSwatch`, and `DitherMeter` expose `Properties` (the shared fixture/encoder parameter names) and `SetOption(name, value)`. The chart, pie and radar also provide typed `Series`/`Slices` setters. `DitherButton` is a real WinUI `Button`; `DitherLegend` uses keyboard-accessible native toggle buttons. Set `AccessibleLabel` to a useful description of your data.

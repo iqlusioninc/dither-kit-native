@@ -60,6 +60,9 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
+      - uses: microsoft/setup-msbuild@v2
+        with:
+          msbuild-architecture: x64
       - name: Install Windows App Runtime 1.7
         shell: pwsh
         run: |
@@ -68,7 +71,13 @@ jobs:
           $process = Start-Process $installer -ArgumentList '--quiet' -Wait -PassThru
           if ($process.ExitCode -notin @(0, 3010)) { throw "Windows App Runtime installer failed: $($process.ExitCode)" }
       - name: Build WinUI gallery
-        timeout-minutes: 9
+        timeout-minutes: 12
         run: ./windows/scripts/build-ci.ps1
       - name: Direct2D golden tests
-        run: dotnet test windows/DitherKit.WinUI.Tests/DitherKit.WinUI.Tests.csproj --configuration Release -p:Platform=x64
+        run: dotnet test windows/DitherKit.WinUI.Tests/DitherKit.WinUI.Tests.csproj --configuration Release -p:Platform=x64 --no-build --no-restore
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-build-diagnostics
+          path: ${{ runner.temp }}/winui-*.log
+          if-no-files-found: warn

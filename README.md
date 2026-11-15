@@ -74,11 +74,12 @@ DitherMeter(value: 0.65, label: "Capacity")
 
 ## WinUI 3
 
-Requires Windows, .NET 8, and the Windows SDK 10.0.22621.0. The minimum runtime OS is Windows 10 build 19041. Pure `DitherKit.IR` and its fixture tests also run on Linux and macOS.
+Requires Windows, the .NET 8 SDK, Visual Studio Windows application build tools, and the Windows SDK 10.0.22621.0. The minimum runtime OS is Windows 10 build 19041. Pure `DitherKit.IR` and its fixture tests also run on Linux and macOS. `global.json` selects an installed .NET 8 feature band.
 
 ```powershell
-dotnet build windows/DitherKit.Gallery/DitherKit.Gallery.csproj -c Release -p:Platform=x64
-dotnet test windows/DitherKit.WinUI.Tests/DitherKit.WinUI.Tests.csproj -c Release -p:Platform=x64
+msbuild windows/DitherKit.Gallery/DitherKit.Gallery.csproj /restore /p:Configuration=Release /p:Platform=x64
+msbuild windows/DitherKit.WinUI.Tests/DitherKit.WinUI.Tests.csproj /restore /p:Configuration=Release /p:Platform=x64
+dotnet test windows/DitherKit.WinUI.Tests/DitherKit.WinUI.Tests.csproj -c Release -p:Platform=x64 --no-build --no-restore
 ```
 
 Reference `windows/DitherKit.WinUI/DitherKit.WinUI.csproj` for controls or `windows/DitherKit.IR/DitherKit.IR.csproj` for pure encoders. ComputeSharp provides the Direct2D pixel shader; Win2D scales its grid-resolution render target with nearest-neighbor interpolation.
