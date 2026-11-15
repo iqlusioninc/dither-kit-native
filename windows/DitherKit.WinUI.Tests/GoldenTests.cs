@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Diagnostics;
 using DitherKit.WinUI;
 using Microsoft.Graphics.Canvas;
 using Windows.Graphics.Imaging;
@@ -49,5 +50,42 @@ public sealed class GoldenTests(ITestOutputHelper output)
             count++;
         }
         Assert.Equal(39, count);
+        if (Environment.GetEnvironmentVariable("DITHER_PROFILE") == "1")
+            Profile(device, scenes.RootElement.GetProperty("scenes"));
+    }
+
+    // Opt-in diagnostics only: correctness above always checks all 39 scenes.
+    private void Profile(CanvasDevice device, JsonElement scenes)
+    {
+        string[] names = ["gradient_2", "background_plasma", "area_2", "line_4", "pie_2", "radar_1"];
+        foreach (string name in names)
+        {
+            var scene = scenes.EnumerateArray().Single(s => s.GetProperty("name").GetString() == name);
+            int w = scene.GetProperty("w").GetInt32(), h = scene.GetProperty("h").GetInt32();
+            var program = scene.GetProperty("program").EnumerateArray().Select(v => v.GetSingle()).ToArray();
+            void RenderAndSynchronize()
+            {
+                using var target = DitherRenderer.Render(device, program, w, h, straightAlpha: true);
+                _ = target.GetPixelBytes(); // Readback completes GPU work before stopping the clock.
+            }
+            for (int i = 0; i < 10; i++) RenderAndSynchronize();
+            const int rendersPerSample = 25;
+            double[] samples = new double[7];
+            for (int sample = 0; sample < samples.Length; sample++)
+            {
+                var clock = Stopwatch.StartNew();
+                for (int i = 0; i < rendersPerSample; i++) RenderAndSynchronize();
+                clock.Stop();
+                samples[sample] = clock.Elapsed.TotalMicroseconds / rendersPerSample;
+            }
+            double median = samples.Order().ElementAt(samples.Length / 2);
+            output.WriteLine("DITHER_PROFILE " + JsonSerializer.Serialize(new
+            {
+                scene = name, width = w, height = h, renderer = "WARP", rendersPerSample,
+                clock = "Synchronized wall time: allocation, upload, rendering and readback; not isolated GPU time",
+                median_us = median, samples_us = samples,
+                revision = Environment.GetEnvironmentVariable("GITHUB_SHA") ?? "local"
+            }));
+        }
     }
 }
