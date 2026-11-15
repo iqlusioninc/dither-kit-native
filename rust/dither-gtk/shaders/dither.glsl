@@ -22,6 +22,7 @@ uniform sampler2D uBase; // pass 1 only
 uniform int uPass;
 uniform ivec2 uGrid;
 uniform int uStraight; // pass 1: 1 = straight alpha (tests), 0 = premultiplied
+uniform int uBloomIndex; // CPU metadata; zero retains legacy program scanning
 
 out vec4 fragColor;
 
@@ -100,9 +101,8 @@ float enc(float v) {
     return rnd(s * 255.0);
 }
 
-bool oklch_rgb(float l, float c, float h, out vec4 outc) {
-    float hr = radians(h);
-    float a = c * cos(hr), b = c * sin(hr);
+bool oklch_rgb(float l, float c, float cos_h, float sin_h, out vec4 outc) {
+    float a = c * cos_h, b = c * sin_h;
     float l_ = l + 0.39633778 * a + 0.21580376 * b;
     float m_ = l - 0.105561346 * a - 0.06385417 * b;
     float s_ = l - 0.08948418 * a - 1.2914855 * b;
@@ -120,13 +120,16 @@ vec4 shade(float hue, float chroma, float level) {
     level = clamp(level, 0.0, 1.0);
     float l = 0.22 + level * 0.72;
     float c = max(chroma * clamp(1.0 - abs(level - 0.55) * 1.3, 0.25, 1.0), 0.0);
+    // Hue is invariant while gamut search reduces chroma one step at a time.
+    float hr = radians(hue);
+    float cos_h = cos(hr), sin_h = sin(hr);
     vec4 o;
     for (int k = 0; k < 200; k++) {
-        if (oklch_rgb(l, c, hue, o)) return o;
+        if (oklch_rgb(l, c, cos_h, sin_h, o)) return o;
         c -= 0.005;
         if (c <= 0.0) break;
     }
-    if (oklch_rgb(l, 0.0, hue, o)) return o;
+    if (oklch_rgb(l, 0.0, cos_h, sin_h, o)) return o;
     return vec4(0.0, 0.0, 0.0, 255.0);
 }
 
@@ -390,6 +393,7 @@ vec4 evalList(int start, int end, int x, int y, vec4 cur) {
 }
 
 int bloomIndex() {
+    if (uBloomIndex > 0) return uBloomIndex;
     int end = 1 + DI(0);
     int i = 1;
     for (int guard = 0; guard < 65536; guard++) {

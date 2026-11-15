@@ -32,7 +32,8 @@ public static class DitherRenderer
             data: MemoryMarshal.AsBytes(program.AsSpan()), strides: []);
         using var effect = new PixelShaderEffect<DitherShader>
         {
-            ConstantBuffer = new DitherShader(width, height, straightAlpha),
+            ConstantBuffer = new DitherShader(width, height, straightAlpha,
+                DitherKit.IR.DitherProgram.FindBloomIndex(program) ?? 0),
             ResourceTextureManagers = { [0] = manager }
         };
         var target = new CanvasRenderTarget(device, width, height, 96,

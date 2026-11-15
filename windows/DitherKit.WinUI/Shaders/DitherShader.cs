@@ -28,13 +28,18 @@ public readonly partial struct DitherShader : ID2D1PixelShader
     private readonly int width;
     private readonly int height;
     private readonly int straight;
+    private readonly int programSplit;
 
     public DitherShader(int width, int height, bool straightAlpha)
+        : this(width, height, straightAlpha, 0) { }
+
+    public DitherShader(int width, int height, bool straightAlpha, int programSplit)
     {
         this.data = default;
         this.width = width;
         this.height = height;
         this.straight = straightAlpha ? 1 : 0;
+        this.programSplit = programSplit;
     }
 
     public float4 Execute()
@@ -117,10 +122,9 @@ private float enc(float v) {
     return rnd(s * 255.0f);
 }
 
-private bool oklch_rgb(float l, float c, float h, out float4 outc) {
+private bool oklch_rgb(float l, float c, float cos_h, float sin_h, out float4 outc) {
     outc = default;
-    float hr = Hlsl.Radians(h);
-    float a = c * Hlsl.Cos(hr), b = c * Hlsl.Sin(hr);
+    float a = c * cos_h, b = c * sin_h;
     float l_ = l + 0.39633778f * a + 0.21580376f * b;
     float m_ = l - 0.105561346f * a - 0.06385417f * b;
     float s_ = l - 0.08948418f * a - 1.2914855f * b;
@@ -138,15 +142,18 @@ private float4 shade(float hue, float chroma, float level) {
     level = Hlsl.Clamp(level, 0.0f, 1.0f);
     float l = 0.22f + level * 0.72f;
     float c = Hlsl.Max(chroma * Hlsl.Clamp(1.0f - Hlsl.Abs(level - 0.55f) * 1.3f, 0.25f, 1.0f), 0.0f);
+    // FXC /Od cannot be relied on to lift these invariant transcendentals.
+    float hr = Hlsl.Radians(hue);
+    float cos_h = Hlsl.Cos(hr), sin_h = Hlsl.Sin(hr);
     float4 o;
     int k = 0;
     while (!(c < 0.0f) && k < 200) {
-        if (oklch_rgb(l, c, hue, out o)) return o;
+        if (oklch_rgb(l, c, cos_h, sin_h, out o)) return o;
         c -= 0.005f;
         if (c <= 0.0f) break;
         k++;
     }
-    if (oklch_rgb(l, 0.0f, hue, out o)) return o;
+    if (oklch_rgb(l, 0.0f, cos_h, sin_h, out o)) return o;
     return new float4(0.0f, 0.0f, 0.0f, 255.0f);
 }
 
@@ -411,6 +418,7 @@ private float4 evalList(int start, int end, int x, int y, float4 cur) {
 }
 
 private int bloomIndex() {
+    if (programSplit > 0) return programSplit;
     int end = 1 + DI(0);
     int i = 1;
     int guard = 0;

@@ -5,31 +5,23 @@ use std::rc::Rc;
 pub const DATA_WIDTH: usize = 1024;
 
 pub fn pack_program(values: &[f32]) -> Result<(Vec<f32>, i32), String> {
+    let (data, rows, _) = pack_program_with_split(values)?;
+    Ok((data, rows))
+}
+
+fn pack_program_with_split(values: &[f32]) -> Result<(Vec<f32>, i32, i32), String> {
     if values.is_empty() || values.iter().any(|v| !v.is_finite()) {
         return Err("display list must contain finite floats and its op-count header".into());
     }
-    let count = values[0];
-    if count < 0.0 || count.fract() != 0.0 || count as usize >= values.len() {
-        return Err("display-list op count is invalid".into());
-    }
-    let end = 1 + count as usize;
-    let mut index = 1;
-    while index < end {
-        if index + 1 >= end {
-            return Err("truncated display-list op header".into());
-        }
-        let length = values[index + 1];
-        if length < 2.0 || length.fract() != 0.0 || length as usize > end - index {
-            return Err("display-list op length is invalid".into());
-        }
-        index += length as usize;
-    }
+    let split = dither_ir::program::bloom_index(values)
+        .ok_or("display-list operation headers are invalid")?;
     let rows = values.len().div_ceil(DATA_WIDTH);
     let mut padded = vec![0.0; rows * DATA_WIDTH];
     padded[..values.len()].copy_from_slice(values);
     Ok((
         padded,
         i32::try_from(rows).map_err(|_| "display list too large")?,
+        i32::try_from(split).map_err(|_| "display list too large")?,
     ))
 }
 
@@ -143,7 +135,7 @@ impl Renderer {
         unsafe {
             let gl = &self.gl;
             let max = gl.get_parameter_i32(glow::MAX_TEXTURE_SIZE);
-            let (data, rows) = pack_program(values)?;
+            let (data, rows, split) = pack_program_with_split(values)?;
             if w <= 0 || h <= 0 || w > max || h > max || rows > max || DATA_WIDTH as i32 > max {
                 return Err("grid or program exceeds GL texture limits".into());
             }
@@ -205,6 +197,11 @@ impl Renderer {
             gl.viewport(0, 0, w, h);
             gl.uniform_1_i32(gl.get_uniform_location(self.program, "uData").as_ref(), 0);
             gl.uniform_1_i32(gl.get_uniform_location(self.program, "uBase").as_ref(), 1);
+            gl.uniform_1_i32(
+                gl.get_uniform_location(self.program, "uBloomIndex")
+                    .as_ref(),
+                split,
+            );
             gl.uniform_2_i32(
                 gl.get_uniform_location(self.program, "uGrid").as_ref(),
                 w,

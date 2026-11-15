@@ -31,10 +31,12 @@ public struct DitherSurface: View {
             let width = max(0, Int((geometry.size.width / cell).rounded(.down)))
             let height = max(0, Int((geometry.size.height / cell).rounded(.down)))
             let data = encode(width, height)
+            // Float shader arguments must preserve the integer offset exactly.
+            let split = Program.bloomIndex(in: data).flatMap { Float(exactly: $0) } ?? 0
             Rectangle()
                 .fill(.white)
-                .colorEffect(DitherShaders.library.ditherBase(.floatArray(data), .float(Float(cell)), .float2(Float(width), Float(height)), .float(straightOutput ? 1 : 0)))
-                .layerEffect(DitherShaders.library.ditherPost(.floatArray(data), .float(Float(cell)), .float2(Float(width), Float(height)), .float(straightOutput ? 1 : 0)), maxSampleOffset: CGSize(width: 4 * cell, height: 4 * cell))
+                .colorEffect(DitherShaders.library.ditherBase(.floatArray(data), .float(Float(cell)), .float2(Float(width), Float(height)), .float(straightOutput ? 1 : 0), .float(split)))
+                .layerEffect(DitherShaders.library.ditherPost(.floatArray(data), .float(Float(cell)), .float2(Float(width), Float(height)), .float(straightOutput ? 1 : 0), .float(split)), maxSampleOffset: CGSize(width: 4 * cell, height: 4 * cell))
                 .frame(width: CGFloat(width) * cell, height: CGFloat(height) * cell, alignment: .topLeading)
         }
         .accessibilityLabel("Dither surface")
