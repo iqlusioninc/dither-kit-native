@@ -133,6 +133,9 @@ impl DitherAvatar {
     pub fn widget(&self) -> &gtk::GLArea {
         self.surface.widget()
     }
+    pub fn surface(&self) -> &DitherSurface {
+        &self.surface
+    }
 }
 #[derive(Clone)]
 pub struct DitherSwatch {
@@ -149,6 +152,9 @@ impl DitherSwatch {
     }
     pub fn widget(&self) -> &gtk::GLArea {
         self.surface.widget()
+    }
+    pub fn surface(&self) -> &DitherSurface {
+        &self.surface
     }
 }
 
@@ -340,7 +346,10 @@ impl DitherChart {
         let r = refresh.clone();
         surface.widget().connect_resize(move |_, _, _| {
             let r = r.clone();
-            glib::idle_add_local_once(move || r());
+            glib::idle_add_local_full(glib::Priority::DEFAULT, move || {
+                r();
+                glib::ControlFlow::Break
+            });
         });
         let (o, h, sf) = (options.clone(), hover.clone(), surface.downgrade());
         motion(&surface, move |inside, x, y| {
@@ -428,6 +437,9 @@ impl DitherSparkline {
     }
     pub fn widget(&self) -> &gtk::GLArea {
         self.surface.widget()
+    }
+    pub fn surface(&self) -> &DitherSurface {
+        &self.surface
     }
 }
 
@@ -564,7 +576,10 @@ impl DitherRadar {
         });
         surface.widget().connect_resize(move |_, w, h| {
             let layout = layout.clone();
-            glib::idle_add_local_once(move || layout(w, h));
+            glib::idle_add_local_full(glib::Priority::DEFAULT, move || {
+                layout(w, h);
+                glib::ControlFlow::Break
+            });
         });
         let widget = gtk::Box::new(gtk::Orientation::Vertical, 8);
         widget.append(&overlay);

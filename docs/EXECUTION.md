@@ -10,6 +10,7 @@ Implementation branch: `implement-native-ports`.
 - The build host is macOS arm64 with GTK 4.24.1, Swift 6.4.2, and .NET SDK 11. Linux Mesa/EGL and Windows Direct2D require their native CI runners.
 - Replace obsolete Rust `epoxy = 0.1` (depends on yanked `xml-rs`) with `libloading` of libepoxy dispatch exports, retaining libepoxy symbol loading.
 - ComputeSharp 3.2 requires Windows SDK 22621; use that compile-time TFM while retaining minimum runtime Windows 10 build 19041.
+- FXC emits performance warnings for the reference's required signed division and modulo. Disable warnings-as-errors only on this shader, retain normal validation/optimization/linking, and enable IEEE strictness; pixel parity remains a hard gate.
 - Strengthen `dither-golden --check`: check stored JSON programs and decoded PNG bytes as well as freshly generated VM/upstream parity. A test demonstrated the original command accepted changed fixture programs.
 
 ## Baseline validation
@@ -29,7 +30,10 @@ Implementation branch: `implement-native-ports`.
 ## Publishing
 
 User authorized a new public repository under `iqlusioninc`.
-Created: https://github.com/iqlusioninc/dither-kit-native (no code pushed yet).
+Created and source pushed: https://github.com/iqlusioninc/dither-kit-native.
+Native run results: https://github.com/iqlusioninc/dither-kit-native/actions.
+
+The first Linux CI run passed strict desktop GL and GLES goldens (39 scenes each), fixture integrity, and all 74 C# tests on .NET 8. The gallery capture exposed timing/layout issues under llvmpipe; those are being corrected before final screenshot acceptance. Initial macOS CI exposed a plugin cache sandbox issue; the fix passes a fresh sandboxed SwiftPM run locally. Windows reached HLSL compilation and exposed FXC warnings-as-errors; the shader-local flag correction awaits native rerun.
 
 ## Review and pixel transport
 

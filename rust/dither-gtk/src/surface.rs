@@ -16,6 +16,9 @@ pub struct DitherSurface {
     area: gtk::GLArea,
     cell: Rc<Cell<i32>>,
     encode: Rc<RefCell<Box<Encoder>>>,
+    renderer: Rc<RefCell<Option<Renderer>>>,
+    frames: Rc<Cell<u64>>,
+    rendered_size: Rc<Cell<(usize, usize)>>,
 }
 
 impl DitherSurface {
@@ -32,10 +35,17 @@ impl DitherSurface {
             area,
             cell: Rc::new(Cell::new(cell.max(1))),
             encode: Rc::new(RefCell::new(Box::new(encode))),
+            renderer: Rc::default(),
+            frames: Rc::new(Cell::new(0)),
+            rendered_size: Rc::new(Cell::new((0, 0))),
         };
-        let renderer: Rc<RefCell<Option<Renderer>>> = Rc::default();
+        let renderer = this.renderer.clone();
         let r = renderer.clone();
+        let f = this.frames.clone();
+        let size = this.rendered_size.clone();
         this.area.connect_realize(move |area| {
+            f.set(0);
+            size.set((0, 0));
             area.make_current();
             if area.error().is_some() {
                 return;
@@ -57,6 +67,8 @@ impl DitherSurface {
         });
         let cell = this.cell.clone();
         let encoder = this.encode.clone();
+        let frames = this.frames.clone();
+        let rendered_size = this.rendered_size.clone();
         this.area.connect_render(move |area, _| {
             let mut storage = renderer.borrow_mut();
             let Some(renderer) = storage.as_mut() else {
@@ -77,13 +89,17 @@ impl DitherSurface {
                 let target = std::num::NonZeroU32::new(id).map(glow::NativeFramebuffer);
                 let program = encoder.borrow()(w as usize, h as usize);
                 match renderer.render(&program.to_vec(), w, h, false) {
-                    Ok(()) => renderer.blit(
-                        target,
-                        area.width() * scale,
-                        area.height() * scale,
-                        c,
-                        scale,
-                    ),
+                    Ok(()) => {
+                        renderer.blit(
+                            target,
+                            area.width() * scale,
+                            area.height() * scale,
+                            c,
+                            scale,
+                        );
+                        rendered_size.set((w as usize, h as usize));
+                        frames.set(frames.get().saturating_add(1));
+                    }
                     Err(error) => area.set_error(Some(&glib::Error::new(
                         gtk::gdk::GLError::NotAvailable,
                         &error,
@@ -100,6 +116,9 @@ impl DitherSurface {
             area: self.area.downgrade(),
             cell: self.cell.clone(),
             encode: Rc::downgrade(&self.encode),
+            renderer: Rc::downgrade(&self.renderer),
+            frames: self.frames.clone(),
+            rendered_size: self.rendered_size.clone(),
         }
     }
     pub fn widget(&self) -> &gtk::GLArea {
@@ -120,6 +139,36 @@ impl DitherSurface {
         self.area
             .update_property(&[gtk::accessible::Property::Label(label)]);
     }
+    /// Number of successfully rendered frames, useful for capture/readiness checks.
+    pub fn rendered_frames(&self) -> u64 {
+        self.frames.get()
+    }
+    /// Capture the last composited grid, in premultiplied RGBA from the top left.
+    /// The widget must have completed a frame and still be realized.
+    pub fn capture_grid(&self) -> Result<(usize, usize, Vec<u8>), String> {
+        if !self.area.is_realized() || self.frames.get() == 0 {
+            return Err("surface has not rendered a frame".into());
+        }
+        self.area.make_current();
+        if let Some(error) = self.area.error() {
+            return Err(error.to_string());
+        }
+        let storage = self.renderer.borrow();
+        let renderer = storage
+            .as_ref()
+            .ok_or("surface GL context is unavailable")?;
+        let (w, h) = self.rendered_size.get();
+        let gl = renderer.context();
+        let previous = unsafe { gl.get_parameter_i32(glow::READ_FRAMEBUFFER_BINDING) as u32 };
+        let pixels = unsafe { renderer.read_rgba() };
+        unsafe {
+            gl.bind_framebuffer(
+                glow::READ_FRAMEBUFFER,
+                std::num::NonZeroU32::new(previous).map(glow::NativeFramebuffer),
+            );
+        }
+        Ok((w, h, pixels))
+    }
     pub fn queue_render(&self) {
         self.area.queue_render();
     }
@@ -129,6 +178,9 @@ pub(crate) struct WeakDitherSurface {
     area: glib::WeakRef<gtk::GLArea>,
     cell: Rc<Cell<i32>>,
     encode: std::rc::Weak<RefCell<Box<Encoder>>>,
+    renderer: std::rc::Weak<RefCell<Option<Renderer>>>,
+    frames: Rc<Cell<u64>>,
+    rendered_size: Rc<Cell<(usize, usize)>>,
 }
 impl WeakDitherSurface {
     pub(crate) fn upgrade(&self) -> Option<DitherSurface> {
@@ -136,6 +188,9 @@ impl WeakDitherSurface {
             area: self.area.upgrade()?,
             cell: self.cell.clone(),
             encode: self.encode.upgrade()?,
+            renderer: self.renderer.upgrade()?,
+            frames: self.frames.clone(),
+            rendered_size: self.rendered_size.clone(),
         })
     }
 }
