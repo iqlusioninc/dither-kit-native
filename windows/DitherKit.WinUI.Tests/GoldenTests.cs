@@ -2,13 +2,12 @@ using System.Text.Json;
 using DitherKit.WinUI;
 using Microsoft.Graphics.Canvas;
 using Windows.Graphics.Imaging;
-using Windows.Storage;
-using Windows.Storage.Streams;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace DitherKit.WinUI.Tests;
 
-public sealed class GoldenTests
+public sealed class GoldenTests(ITestOutputHelper output)
 {
     [Fact]
     public async Task EveryFixtureRendersThroughDirect2DWithinGoldenTolerance()
@@ -16,7 +15,8 @@ public sealed class GoldenTests
         // No XAML window or dispatcher is involved. Force software WARP so the
         // same test also runs on hosted CI machines without a physical GPU.
         using var device = new CanvasDevice(true);
-        using var scenes = JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "fixtures/scenes.json")));
+        string scenesPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "fixtures", "scenes.json"));
+        using var scenes = JsonDocument.Parse(File.ReadAllText(scenesPath));
         int count = 0;
         foreach (var scene in scenes.RootElement.GetProperty("scenes").EnumerateArray())
         {
@@ -25,8 +25,11 @@ public sealed class GoldenTests
             float[] program = scene.GetProperty("program").EnumerateArray().Select(v => v.GetSingle()).ToArray();
             using var rendered = DitherRenderer.Render(device, program, w, h, straightAlpha: true);
             var pixels = rendered.GetPixelBytes(); // DXGI R8G8B8A8, straight alpha
-            var file = await StorageFile.GetFileFromPathAsync(Path.Combine(AppContext.BaseDirectory, $"fixtures/png/{name}.png"));
-            using var stream = await file.OpenAsync(FileAccessMode.Read);
+            string pngPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "fixtures", "png", $"{name}.png"));
+            output.WriteLine($"Loading golden PNG: {pngPath}; exists={File.Exists(pngPath)}");
+            Assert.True(File.Exists(pngPath), $"Golden image is missing: {pngPath}");
+            using var file = File.OpenRead(pngPath);
+            using var stream = file.AsRandomAccessStream();
             var decoder = await BitmapDecoder.CreateAsync(stream);
             Assert.Equal((uint)w, decoder.PixelWidth);
             Assert.Equal((uint)h, decoder.PixelHeight);
